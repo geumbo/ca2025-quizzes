@@ -107,18 +107,36 @@ test_end:
     addi sp, sp, 32
     ret
 clz:
-    li t0, 32          # t0 = n = 32
-    li t1, 16          # t1 = c = 16
-    mv t2, a0          # t2 = x
-clz_1:
-    srl t3, t2, t1     # t3 = y = x >> c
-    beq t3, x0, clz_2  # if y == 0, goto clz_2
-    sub t0, t0, t1     # n = n - c
-    mv t2, t3          # x = y
-clz_2: 
-    srli t1, t1, 1     # c = c >> 1
-    bne t1, x0, clz_1  # if c != 0, goto clz_1
-    sub a0, t0, t2     # return n - x
+    # if (x == 0) return 32
+    bne  a0, x0, clz_start
+    li   a0, 32
+    ret                      
+clz_start:
+    li   a1, 0               # a1 = n = 0
+    srli t0, a0, 16
+    bne  t0, x0, check_8 
+    addi a1, a1, 16          # n += 16
+    slli a0, a0, 16          # x <<= 16
+check_8:
+    srli t0, a0, 24
+    bne  t0, x0, check_4
+    addi a1, a1, 8           # n += 8
+    slli a0, a0, 8           # x <<= 8
+check_4:
+    srli t0, a0, 28
+    bne  t0, x0, check_2
+    addi a1, a1, 4           # n += 4
+    slli a0, a0, 4           # x <<= 4
+check_2:
+    srli t0, a0, 30
+    bne  t0, x0, check_1
+    addi a1, a1, 2           # n += 2
+    slli a0, a0, 2           # x <<= 2
+check_1:
+    blt a0, x0, clz_end      # if (x < 0), MSB is 1, we are done
+    addi a1, a1, 1           # n += 1
+clz_end:
+    mv   a0, a1              # move result to a0 for return
     ret
 decode:
     andi t0, a0, 0x0f   # t0 = mantissa = x & 0x0f
