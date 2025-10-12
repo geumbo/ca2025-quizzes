@@ -949,15 +949,13 @@ b_larger:
 after_sub:
     # if (!result_mant) return BF16_ZERO
     beq s8, x0, return_zero
-normalize_loop:
-    # while (!(result_mant & 0x80))
-    andi t0, s8, 0x80
-    bne t0, x0, build_result
-    slli s8, s8, 1                     # result_mant <<= 1
-    addi s7, s7, -1                    # result_exp--
-    #  if (--result_exp <= 0)
-    bge x0, s7, return_zero
-    j normalize_loop
+    mv a0, s8                          # a0 = result_mant
+    jal ra, clz                        # shift_amount = clz(result_mant)
+    addi t0, a0, -24                   # t0 = clz(result_mant) - 24
+    ble s7, t0, return_zero            # if (result_exp <= shift_amount) return zero
+    sub s7, s7, t0                     # result_exp -= shift_amount
+    sll s8, s8, t0                     # result_mant <<= shift_amount
+    j build_result
 build_result:
     # return (result_sign << 15) | ((result_exp & 0xFF) << 7) | (result_mant & 0x7F)
     slli a0, s6, 15                    # a0 = result_sign << 15
@@ -1505,4 +1503,36 @@ sqrt_end:
     lw s7, 4(sp)
     lw s8, 0(sp)
     addi sp, sp, 40
+    ret
+clz:
+    # if (x == 0) return 32
+    bne  a0, x0, clz_start
+    li   a0, 32
+    ret                      
+clz_start:
+    li   a1, 0               # a1 = n = 0
+    srli t0, a0, 16
+    bne  t0, x0, check_8 
+    addi a1, a1, 16          # n += 16
+    slli a0, a0, 16          # x <<= 16
+check_8:
+    srli t0, a0, 24
+    bne  t0, x0, check_4
+    addi a1, a1, 8           # n += 8
+    slli a0, a0, 8           # x <<= 8
+check_4:
+    srli t0, a0, 28
+    bne  t0, x0, check_2
+    addi a1, a1, 4           # n += 4
+    slli a0, a0, 4           # x <<= 4
+check_2:
+    srli t0, a0, 30
+    bne  t0, x0, check_1
+    addi a1, a1, 2           # n += 2
+    slli a0, a0, 2           # x <<= 2
+check_1:
+    blt a0, x0, clz_end      # if (x < 0), MSB is 1, we are done
+    addi a1, a1, 1           # n += 1
+clz_end:
+    mv   a0, a1              # move result to a0 for return
     ret
