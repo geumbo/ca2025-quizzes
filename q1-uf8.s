@@ -140,47 +140,28 @@ encode:
     mv s0, a0                        # s0 = a0 = value
     li t0, 16                        # value = 16
     bltu s0, t0, encode_return_value # if value < 16, return value
+    # Calculate exponent = 31 - clz((value >> 4) + 1)
+    srli a0, s0, 4                   # value >> 4
+    addi a0, a0, 1                   # (value >> 4) + 1
     jal ra, clz                      # call clz
-    mv s1, a0                        # s1 = lz = clz(value)
-    li t0, 31                        # t1 = 31
-    sub s2, t0, s1                   # s2 = msb = 31 - lz
-    mv t1, x0                        # t1 = exp = 0
-    mv t2, x0                        # t2 = overflow = 0
-    li t0, 5                         
-    blt s2, t0, find_exact_exp       # if msb < 5, goto find_exact_exp
-    addi t1, s2, -4                  # exp = msb - 4
+    li t0, 31
+    sub s1, t0, a0                   # exponent = 31 - clz
+    # if (exponent > 15) exponent = 15
     li t0, 15
-    bge t0, t1, calc_overflow        # exp <= 15, goto calc_overflow
-    mv t1, t0                        # if exp > 15, exp = 15
+    bge t0, s1, calc_overflow
+    mv s1, t0                        # s1 = exponent
 calc_overflow:
-    li   t2, 1
-    sll  t2, t2, t1                  # t2 = 1 << exponent
-    addi t2, t2, -1                  # t2 = (1 << exponent) - 1
-    slli t2, t2, 4                   # overflow = ((1 << exponent) - 1) << 4
-    j    adjust
-adjust:
-    bge x0, t1, find_exact_exp       # if exp <= 0, goto find_exact_exp
-    bgeu s0, t2,  find_exact_exp     # if value >= overflow, goto find_exact_exp
-    addi t2, t2, -16                 # overflow - 16
-    srli t2, t2, 1                   # (overflow - 16) >> 1
-    addi t1, t1, -1                  # exp - 1
-    j adjust
-find_exact_exp:
-    li t0, 15
-find_exact_exp_loop:
-    bge t1, t0, calc_mantissa        # if exp >= 15, goto calc_mantissa
-    slli t3, t2, 1                   # t3 = next_overflow, overflow << 1
-    addi t3, t3, 16                  # next_overflow = (overflow << 1) + 16
-    bltu s0, t3, calc_mantissa       # if value < next_overflow, goto calc_mantissa
-    mv t2, t3                        # overflow = next_overflow
-    addi t1, t1, 1                   # exp + 1
-    j find_exact_exp_loop            # repeat 
+    # overflow = ((1u << exponent) - 1u) << 4   
+    li   t0, 1
+    sll  t0, t0, s1                  # t0 = 1 << exponent
+    addi t0, t0, -1                  # t0 = (1 << exponent) - 1
+    slli s2, t0, 4                   # s2 = overflow = ((1 << exponent) - 1) << 4
 calc_mantissa:
-    sub t3, s0, t2                   # t3 = mantissa = value - overflow
-    srl t3, t3, t1                   # mantissa >> exp
-return_value:
-    slli t1, t1, 4                   # exp << 4
-    or a0, t3, t1                    # return (mantissa | (exp << 4))
+    # mantissa = (value - overflow) >> exponent
+    sub t0, s0, s2                   # t0 = mantissa = value - overflow
+    srl t0, t0, s1                   # mantissa >> exp
+    slli s1, s1, 4                   # exp << 4
+    or a0, s1, t0                    # return (mantissa | (exp << 4))
     j encode_end
 encode_return_value:
     mv a0, s0                        # return value (a0)
