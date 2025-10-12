@@ -88,8 +88,7 @@ main:
     or s0, s0, a0                   # failed |= test_rounding()
     beq s0, x0, all_passed          # if (!failed) goto all_passed
     la a0, test_failed
-    jal ra, print_string
-    li a0, 1                        # return 1
+    jal ra, fail_with_message
     j main_end
 all_passed:
     la a0, test_passed
@@ -118,6 +117,7 @@ test_basic_conversions:
     li s0, 0                        # i = 0
     la s1, test_values              # &test_values[0]
     li s8, 11                       # s8 = test_count = 11
+    li t6, 0x7FFF                   # mask for bf16 absolute value
 test_basic_conversions_loop:
     # for (i = 0; i < test_count; i++)
     beq s0, s8, test_basic_conversions_passed
@@ -138,8 +138,7 @@ test_basic_conversions_loop:
     srli t2, s4, 31                # t2 = conv_sign
     beq t1, t2, sign_ok            # if (orig_sign == conv_sign) goto sign_ok
     la a0, fail_sign
-    jal ra, print_string
-    li a0, 1                       # return 1
+    jal ra, fail_with_message
     j test_basic_conversions_end
 sign_ok:
     # Test 2: Relative error check
@@ -157,12 +156,8 @@ sign_ok:
     mv a0, s7                      # a0 = conv in bf16
     jal ra, bf16_sub               # diff = bf16_sub(conv, orig)
     mv s5, a0                      # s5 = diff
-    # if (diff < 0) diff = -diff
-    srli t1, s5, 15                # t1 = sign of diff
-    beq t1, x0, check_rel_error
-    li t0, BF16_SIGN_MASK          # t0 = 0x8000
-    xor s5, s5, t0                 # diff = -diff
-check_rel_error:
+    # abs(diff) - mask out sign bit
+    and s5, s5, t6                 # diff = abs(diff)
     # rel_error = # rel_error = |diff| / orig
     mv a0, s2                      # a0 = orig
     jal ra, f32_to_bf16
@@ -170,20 +165,16 @@ check_rel_error:
     mv a0, s5                      # a0 = diff
     jal ra, bf16_div               # rel_error = bf16_div(diff, orig)
     mv s6, a0                      # s6 = rel_error
-    srli t1, s6, 15                # t1 = sign of rel_error
-    beq t1, x0, check_rel_error_diff
-    li t0, BF16_SIGN_MASK          # t0 = 0x8000
-    xor s6, s6, t0                 # rel_error = -rel_error
-check_rel_error_diff:
-    li a0, 0x3C23D70A              # 0.01f 
+    # abs(rel_error) - mask out sign bit
+    and s6, s6, t6                 # rel_error = abs(rel_error)
+    li a0, 0x3C23D70A              # 0.01f
     jal ra, f32_to_bf16
     mv a1, a0                      # a1 = 0.01 in bf16
     mv a0, s6                      # a0 = rel_error
     jal ra, lt                     # if (bf16_lt(rel_error, 0.01)) return true
     bne a0, x0, skip_check
     la a0, fail_error
-    jal ra, print_string
-    li a0, 1                       # return 1
+    jal ra, fail_with_message
     j test_basic_conversions_end
 skip_check:
     addi s0, s0, 1                 # i++
@@ -217,16 +208,14 @@ test_special_values:
     jal ra, isinf            
     bne a0, x0, pos_inf_ok       # if (bf16_isinf(pos_inf_bits)) return true
     la a0, fail_pos_inf
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_special_values_end
 pos_inf_ok:
     mv a0, s0                    # a0 = pos_inf_bits
     jal ra, isnan               
     beq a0, x0, pos_not_nan_ok   # if (!bf16_isnan(pos_inf_bits)) return true
     la a0, fail_inf_as_nan
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_special_values_end
 pos_not_nan_ok:
     li s0, 0xFF80                # s0 = neg_inf_bits
@@ -234,8 +223,7 @@ pos_not_nan_ok:
     jal ra, isinf                # if (bf16_isinf(neg_inf_bits)) return true
     bne a0, x0, neg_inf_ok
     la a0, fail_neg_inf
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_special_values_end
 neg_inf_ok:
     jal ra, nan                  # a0 = NaN()
@@ -244,16 +232,14 @@ neg_inf_ok:
     jal ra, isnan                
     bne a0, x0, nan_ok           # if (bf16_isnan(NaN())) return true
     la a0, fail_nan
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_special_values_end
 nan_ok:
     mv a0, s0                    # a0 = NaN()
     jal ra, isinf               
     beq a0, x0, nan_not_inf_ok   # if (!bf16_isinf(NaN())) return true
     la a0, fail_nan_as_inf
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_special_values_end
 nan_not_inf_ok:
     li a0, 0x00000000            # a0 = zero_bits
@@ -263,8 +249,7 @@ nan_not_inf_ok:
     jal ra, iszero               
     bne a0, x0, zero_ok          # if (bf16_iszero(zero_bits)) return true
     la a0, fail_zero
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_special_values_end
 zero_ok:
     li a0, 0x80000000            # a0 = neg_zero_bits
@@ -274,8 +259,7 @@ zero_ok:
     jal ra, iszero
     bne a0, x0, neg_zero_ok      # if (bf16_iszero(neg_zero_bits)) return true
     la a0, fail_neg_zero
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_special_values_end
 neg_zero_ok:
     la a0, special_pass_msg
@@ -293,10 +277,12 @@ test_arithmetic:
     sw s0, 16(sp)                # s0 = a
     sw s1, 12(sp)                # s1 = b
     sw s2, 8(sp)                 # s2 = c
-    sw s3, 4(sp)                 # s3 = result
-    sw s4, 0(sp)                 # s4 = temp
+    sw s3, 4(sp)                 # s3 = tol_small
+    sw s4, 0(sp)                 # s4 = tol_large
     la a0, arith_msg
     jal ra, print_string
+    li s3, 0x3C23D70A            # tolerance: 0.01f
+    li s4, 0x3DCCCCCD            # tolerance: 0.1f
     # Test 1: Addition (1.0 + 2.0 = 3.0)
     li a0, 0x3F800000            # bf16_t a = f32_to_bf16(1.0f)
     jal ra, f32_to_bf16        
@@ -308,36 +294,13 @@ test_arithmetic:
     mv a1, s1                    # a1 = b
     jal ra, bf16_add             # c = bf16_add(a, b)
     mv s2, a0                    # s2 = c
-    mv a0, s2                    # a0 = c
-    jal ra, bf16_to_f32          # bf16_to_f32(c)
-    mv s3, a0                    # s3 = result
-    mv a0, s3
-    jal ra, f32_to_bf16
-    mv s3, a0                    # s3 = result in bf16
-    li t0, 0x40400000            # expected = 3.0
-    mv a0, t0
-    jal ra, f32_to_bf16
-    mv t0, a0                    # t0 = expected
-    # diff = sub(result, expected)
-    mv a0, s3
-    mv a1, t0
-    jal ra, bf16_sub
-    mv s4, a0                    # s4 = diff
-    # if (diff < 0) diff = -diff
-    srli t1, s4, 15              # t1 = sign of diff
-    beq t1, x0, add_check_diff    
-    li t0, BF16_SIGN_MASK        # t0 = 0x8000
-    xor s4, s4, t0               # diff = -diff
-add_check_diff:
-    li a0, 0x3C23D70A            # 0.01f
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = 0.01 in bf16
-    mv a0, s4                    # a0 = diff
-    jal ra, lt
-    bne a0, x0, add_ok           # if (bf16_lt(diff, 0.01)) return true
+    mv a0, s2                    # actual result in bf16
+    li a1, 0x40400000            # expected = 3.0f
+    mv a2, s3                    # tolerance = 0.01f
+    jal ra, bf16_expect_close
+    bne a0, x0, add_ok
     la a0, fail_add
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_arithmetic_end
 add_ok:
     # Test 2: Subtraction (2.0 - 1.0 = 1.0)
@@ -345,34 +308,13 @@ add_ok:
     mv a1, s0                    # a1 = a
     jal ra, bf16_sub             # c = bf16_sub(b, a)
     mv s2, a0                    # s2 = c
-    mv a0, s2                    # a0 = c
-    jal ra, bf16_to_f32          # bf16_to_f32(c)
-    mv s3, a0                    # s3 = result
-    mv a0, s3
-    jal ra, f32_to_bf16
-    mv s3, a0                    # s3 = result in bf16
-    li a0, 0x3F800000            # expected = 1.0f
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = expected
-    # diff = sub(result, expected)
-    mv a0, s3
-    jal ra, bf16_sub
-    mv s4, a0                    # s4 = diff
-    # if (diff < 0) diff = -diff
-    srli t1, s4, 15              # t1 = sign of diff
-    beq t1, x0, sub_check_diff
-    li t0, BF16_SIGN_MASK        # t0 = 0x8000
-    xor s4, s4, t0               # diff = -diff
-sub_check_diff:
-    li a0, 0x3C23D70A            # 0.01f
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = 0.01 in bf16
-    mv a0, s4                    # a0 = diff
-    jal ra, lt
-    bne a0, x0, sub_ok           # if (bf16_lt(diff, 0.01)) return true
+    mv a0, s2
+    li a1, 0x3F800000            # expected = 1.0f
+    mv a2, s3                    # tolerance = 0.01f
+    jal ra, bf16_expect_close
+    bne a0, x0, sub_ok
     la a0, fail_sub
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_arithmetic_end
 sub_ok:
     # Test 3: Multiplication (3.0 * 4.0 = 12.0)
@@ -386,34 +328,13 @@ sub_ok:
     mv a1, s1                    # a1 = b
     jal ra, bf16_mul             # c = bf16_mul(a, b)
     mv s2, a0                    # s2 = c
-    mv a0, s2                    # a0 = c
-    jal ra, bf16_to_f32          # bf16_to_f32(c)
-    mv s3, a0                    # s3 = result
-    mv a0, s3
-    jal ra, f32_to_bf16
-    mv s3, a0                    # s3 = result in bf16
-    li a0, 0x41400000            # expected = 12.0
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = expected
-    # diff = sub(result, expected)
-    mv a0, s3
-    jal ra, bf16_sub
-    mv s4, a0                    # s4 = diff
-    # if (diff < 0) diff = -diff
-    srli t1, s4, 15              # t1 = sign of diff
-    beq t1, x0, mul_check_diff
-    li t0, BF16_SIGN_MASK        # t0 = 0x8000
-    xor s4, s4, t0               # diff = -diff
-mul_check_diff:
-    li a0, 0x3DCCCCCD            # 0.1f
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = 0.1 in bf16
-    mv a0, s4                    # a0 = diff
-    jal ra, lt
-    bne a0, x0, mul_ok           # if (bf16_lt(diff, 0.1)) return true
+    mv a0, s2
+    li a1, 0x41400000            # expected = 12.0f
+    mv a2, s4                    # tolerance = 0.1f
+    jal ra, bf16_expect_close
+    bne a0, x0, mul_ok
     la a0, fail_mul
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_arithmetic_end
 mul_ok:
     # Test 4: Division (10.0 / 2.0 = 5.0)
@@ -427,34 +348,13 @@ mul_ok:
     mv a1, s1                    # a1 = b
     jal ra, bf16_div             # c = bf16_div(a, b)
     mv s2, a0                    # s2 = c
-    mv a0, s2                    # a0 = c
-    jal ra, bf16_to_f32          # bf16_to_f32(c)
-    mv s3, a0                    # s3 = result
-    mv a0, s3
-    jal ra, f32_to_bf16
-    mv s3, a0                    # s3 = result in bf16
-    li a0, 0x40A00000            # expected = 5.0
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = expected
-    # diff = sub(result, expected)
-    mv a0, s3
-    jal ra, bf16_sub
-    mv s4, a0                    # s4 = diff
-    # if (diff < 0) diff = -diff
-    srli t1, s4, 15              # t1 = sign of diff
-    beq t1, x0, div_check_diff
-    li t0, BF16_SIGN_MASK        # t0 = 0x8000
-    xor s4, s4, t0               # diff = -diff
-div_check_diff:
-    li a0, 0x3DCCCCCD            # 0.1f
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = 0.1 in bf16
-    mv a0, s4                    # a0 = diff
-    jal ra, lt
-    bne a0, x0, div_ok           # if (bf16_lt(diff, 0.1)) return true
+    mv a0, s2
+    li a1, 0x40A00000            # expected = 5.0f
+    mv a2, s4                    # tolerance = 0.1f
+    jal ra, bf16_expect_close
+    bne a0, x0, div_ok
     la a0, fail_div
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_arithmetic_end
 div_ok:
     # Test 5: Square Root (sqrt(4.0) = 2.0)
@@ -464,34 +364,13 @@ div_ok:
     mv a0, s0                    # a0 = a
     jal ra, bf16_sqrt            # c = bf16_sqrt(a)
     mv s2, a0                    # s2 = c
-    mv a0, s2                    # a0 = c
-    jal ra, bf16_to_f32          # bf16_to_f32(c)
-    mv s3, a0                    # s3 = result
-    mv a0, s3
-    jal ra, f32_to_bf16
-    mv s3, a0                    # s3 = result in bf16
-    li a0, 0x40000000            # expected = 2.0
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = expected
-    # diff = sub(result, expected)
-    mv a0, s3
-    jal ra, bf16_sub
-    mv s4, a0                    # s4 = diff
-    # if (diff < 0) diff = -diff
-    srli t1, s4, 15              # t1 = sign of diff
-    beq t1, x0, sqrt4_check_diff
-    li t0, BF16_SIGN_MASK        # t0 = 0x8000
-    xor s4, s4, t0               # diff = -diff
-sqrt4_check_diff:
-    li a0, 0x3C23D70A            # 0.01f
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = 0.01 in bf16
-    mv a0, s4                    # a0 = diff
-    jal ra, lt
-    bne a0, x0, sqrt4_ok         # if (bf16_lt(diff, 0.01)) return true
+    mv a0, s2
+    li a1, 0x40000000            # expected = 2.0f
+    mv a2, s3                    # tolerance = 0.01f
+    jal ra, bf16_expect_close
+    bne a0, x0, sqrt4_ok
     la a0, fail_sqrt_4
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_arithmetic_end
 sqrt4_ok:
     # Test 6: Square Root (sqrt(9.0) = 3.0)
@@ -501,34 +380,13 @@ sqrt4_ok:
     mv a0, s0                    # a0 = a
     jal ra, bf16_sqrt            # c = bf16_sqrt(a)
     mv s2, a0                    # s2 = c
-    mv a0, s2                    # a0 = c
-    jal ra, bf16_to_f32          # bf16_to_f32(c)
-    mv s3, a0                    # s3 = result
-    mv a0, s3
-    jal ra, f32_to_bf16
-    mv s3, a0                    # s3 = result in bf16
-    li a0, 0x40400000            # expected = 3.0
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = expected
-    # diff = sub(result, expected)
-    mv a0, s3
-    jal ra, bf16_sub
-    mv s4, a0                    # s4 = diff
-    # if (diff < 0) diff = -diff
-    srli t1, s4, 15              # t1 = sign of diff
-    beq t1, x0, sqrt9_check_diff
-    li t0, BF16_SIGN_MASK        # t0 = 0x8000
-    xor s4, s4, t0               # diff = -diff
-sqrt9_check_diff:
-    li a0, 0x3C23D70A            # 0.01f
-    jal ra, f32_to_bf16
-    mv a1, a0                    # a1 = 0.01 in bf16
-    mv a0, s4                    # a0 = diff
-    jal ra, lt
-    bne a0, x0, sqrt9_ok         # if (bf16_lt(diff, 0.01)) return true
+    mv a0, s2
+    li a1, 0x40400000            # expected = 3.0f
+    mv a2, s3                    # tolerance = 0.01f
+    jal ra, bf16_expect_close
+    bne a0, x0, sqrt9_ok
     la a0, fail_sqrt_9
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_arithmetic_end
 sqrt9_ok:
     la a0, arith_pass_msg
@@ -564,8 +422,7 @@ test_comparisons:
     jal ra, eq                   
     bne a0, x0, eq_ok            # if (bf16_eq(a, c)) return true
     la a0, fail_eq
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 eq_ok:
     mv a0, s0                    # a0 = a
@@ -573,8 +430,7 @@ eq_ok:
     jal ra, eq
     beq a0, x0, neq_ok           # if (!bf16_eq(a, b)) return true
     la a0, fail_neq
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 neq_ok:
     mv a0, s0                    # a0 = a
@@ -582,8 +438,7 @@ neq_ok:
     jal ra, lt
     bne a0, x0, lt_ok            # if (bf16_lt(a, b)) return true
     la a0, fail_lt
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 lt_ok:
     mv a0, s1                    # a0 = b
@@ -591,8 +446,7 @@ lt_ok:
     jal ra, lt
     beq a0, x0, not_lt_ok        # if (!bf16_lt(b, a)) return true
     la a0, fail_not_lt
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 not_lt_ok:
     mv a0, s0                    # a0 = a
@@ -600,8 +454,7 @@ not_lt_ok:
     jal ra, lt
     beq a0, x0, eq_not_lt_ok     # if (!bf16_lt(a, c)) return true
     la a0, fail_eq_not_lt
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 eq_not_lt_ok:
     mv a0, s1                    # a0 = b
@@ -609,8 +462,7 @@ eq_not_lt_ok:
     jal ra, gt
     bne a0, x0, gt_ok            # if (bf16_gt(b, a)) return true
     la a0, fail_gt
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 gt_ok:
     mv a0, s0                    # a0 = a
@@ -618,8 +470,7 @@ gt_ok:
     jal ra, gt
     beq a0, x0, not_gt_ok        # if (!bf16_gt(a, b)) return true
     la a0, fail_not_gt
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 not_gt_ok:
     jal ra, nan                  # a0 = NaN()
@@ -629,8 +480,7 @@ not_gt_ok:
     jal ra, eq
     beq a0, x0, nan_eq_ok        # if (!bf16_eq(a, nan_val)) return true
     la a0, fail_nan_eq
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 nan_eq_ok:
     mv a0, s0                    # a0 = a
@@ -638,8 +488,7 @@ nan_eq_ok:
     jal ra, lt
     beq a0, x0, nan_lt_ok        # if (!bf16_lt(a, nan_val)) return true
     la a0, fail_nan_lt
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 nan_lt_ok:
     mv a0, s0                    # a0 = a
@@ -647,8 +496,7 @@ nan_lt_ok:
     jal ra, gt
     beq a0, x0, nan_gt_ok        # if (!bf16_gt(a, nan_val)) return true
     la a0, fail_nan_gt
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_comparisons_end
 nan_gt_ok:
     la a0, comp_pass_msg
@@ -690,8 +538,7 @@ test_edge_cases:
     li t2, 0x0C388000            # 1e-37f
     bltu t1, t2, test_overflow   # if (|tiny_val| < 1e-37f) return true
     la a0, fail_tiny
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_edge_cases_end
 test_overflow:
     # Test 2: Huge value handling (1e38f * 10.0f)
@@ -708,8 +555,7 @@ test_overflow:
     jal ra, isinf
     bne a0, x0, test_underflow   # if (bf16_isinf(bf_huge2)) return true
     la a0, fail_overflow
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_edge_cases_end
 test_underflow:
     # Test 3: Underflow produces zero or denormal (1e-38f / 10.0f)
@@ -734,8 +580,7 @@ test_underflow:
     li t2, 0x00000001             # 1e-45f
     bltu t1, t2, edge_cases_ok    # if (|smaller_val| < 1e-45f) return true
     la a0, fail_underflow
-    jal ra, print_string
-    li a0, 1                      # return 1
+    jal ra, fail_with_message
     j test_edge_cases_end
 edge_cases_ok:
     la a0, edge_pass_msg
@@ -762,6 +607,7 @@ test_rounding:
     sw s4, 0(sp)                 # s4 = diff2
     la a0, rounding_msg
     jal ra, print_string
+    li t6, 0x7FFF               # mask for bf16 absolute value
     # Test 1: Exact representation (1.5f)
     li a0, 0x3FC00000            # bf_exact = f32_to_bf16(1.5f)
     jal ra, f32_to_bf16
@@ -788,12 +634,8 @@ test_rounding:
     mv a0, s3                    # a0 = back in bf16
     jal ra, bf16_sub
     mv s4, a0                    # s4 = diff2
-    # if (diff2 < 0) diff2 = -diff2
-    srli t1, s4, 15              # t1 = sign of diff
-    beq t1, x0, round_check_diff2
-    li t0, BF16_SIGN_MASK        # t0 = 0x8000
-    xor s4, s4, t0               # diff2 = -diff2
-round_check_diff2:
+    # abs(diff2) - mask out sign bit
+    and s4, s4, t6               # diff2 = abs(diff2)
     li a0, 0x3A83126F            # 0.001f
     jal ra, f32_to_bf16
     mv a1, a0                    # a1 = 0.001 in bf16
@@ -801,13 +643,11 @@ round_check_diff2:
     jal ra, lt
     bne a0, x0, rounding_ok       # if (bf16_lt(diff2, 0.001)) return true
     la a0, fail_rounding
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_rounding_end
 fail_round_exact:
     la a0, fail_exact
-    jal ra, print_string
-    li a0, 1                     # return 1
+    jal ra, fail_with_message
     j test_rounding_end
 rounding_ok:
     la a0, rounding_pass_msg
@@ -830,13 +670,18 @@ print_string:
     lw ra, 0(sp)
     addi sp, sp, 4
     ret
+fail_with_message:
+    mv t0, ra
+    jal ra, print_string
+    mv ra, t0
+    li a0, 1
+    ret
 isnan:
     # a0 = bf16_t.bits
     li t0, BF16_EXP_MASK          # t0 = EXP_MASK
     and t1, a0, t0                # t1 = a.bits & EXP_MASK
     bne t1, t0, return_false      # if t1 != EXP_MASK, return false
-    li t0, BF16_MANT_MASK         # t0 = MANT_MASK
-    and t1, a0, t0                # t1 = a.bits & MANT_MASK
+    andi t1, a0, BF16_MANT_MASK   # t1 = a.bits & MANT_MASK
     beq t1, x0, return_false      # if t1 == 0, return false
     li a0, 1                      # return true
     ret
@@ -845,8 +690,7 @@ isinf:
     li t0, BF16_EXP_MASK          # t0 = EXP_MASK
     and t1, a0, t0                # t1 = a.bits & EXP_MASK
     bne t1, t0, return_false      # if t1 != EXP_MASK, return false
-    li t0, BF16_MANT_MASK         # t0 = MANT_MASK
-    and t1, a0, t0                # t1 = a.bits & MANT_MASK
+    andi t1, a0, BF16_MANT_MASK   # t1 = a.bits & MANT_MASK
     bne t1, x0, return_false      # if t1 != 0, return false
     li a0, 1                      # return true
     ret
@@ -867,6 +711,38 @@ zero:
     ret
 return_false:
     li a0, 0                      # return false
+    ret
+bf16_expect_close:
+    # a0 = actual result (bf16 bits)
+    # a1 = expected result (float32 bits)
+    # a2 = tolerance (float32 bits)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
+    sw s2, 0(sp)
+    mv s0, a0                    # preserve actual bf16
+    mv s1, a1                    # preserve expected f32 bits
+    mv s2, a2                    # preserve tolerance f32 bits
+    mv a0, s1
+    jal ra, f32_to_bf16          # expected bf16
+    mv s1, a0
+    mv a0, s0
+    mv a1, s1
+    jal ra, bf16_sub             # diff = actual - expected
+    mv s0, a0
+    li t0, 0x7FFF
+    and s0, s0, t0               # |diff|
+    mv a0, s2
+    jal ra, f32_to_bf16          # tolerance in bf16
+    mv a1, a0
+    mv a0, s0
+    jal ra, lt                   # return diff < tolerance
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
+    lw s2, 0(sp)
+    addi sp, sp, 16
     ret
 eq:
     # a0 = bf16_t a.bits
