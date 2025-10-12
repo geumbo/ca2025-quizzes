@@ -150,17 +150,11 @@ encode:
     blt s2, t0, find_exact_exp       # if msb < 5, goto find_exact_exp
     addi t1, s2, -4                  # exp = msb - 4
     li t0, 15
-    bge t0, t1, calc_overflow        # exp <= 15, goto calc_overflow
+    mv t3, x0                         # t3 = e = 0
+    bge t0, t1, calc_overflow_loop   # exp <= 15, goto calc_overflow
     mv t1, t0                        # if exp > 15, exp = 15
-calc_overflow:
-    beq  t1, x0, adjust              # exponent == 0 → overflow stays 0
-    li   t2, 1
-    sll  t2, t2, t1                  # t2 = 1 << exponent
-    addi t2, t2, -1                  # t2 = (1 << exponent) - 1
-    slli t2, t2, 4                   # overflow = ((1 << exponent) - 1) << 4
-    j    adjust
 calc_overflow_loop:
-    bge t3, t1, adjust
+    bge t3, t1, adjust               # if e >= exp, goto adjust
     slli t2, t2, 1                   # overflow << 1
     addi t2, t2, 16                  # overflow = (overflow << 1) + 16  
     addi t3, t3, 1                   # e + 1
